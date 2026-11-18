@@ -1,17 +1,11 @@
 import {createGame, launch, stepGame, COLS, ROWS, CELL_H, RADIUS, FLOOR, MIN_ANGLE, MAX_ANGLE} from './core.js?v=4';
+import {drawNumber, SCORE_DIGITS, BALL_DIGITS, BRICK_DIGITS} from './digits.js?v=5';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d', {willReadFrequently: true});
 const el = id => document.getElementById(id);
 const BX = 60, BY = 124, SCALE = 100;
 const colors = ['#43d3c7','#4bc6e6','#6d9fff','#a98cf1','#ed8bc9','#fcad7a'];
-const segments = [
-  [3,0,12,3],[14,3,3,10],[14,16,3,10],[3,26,12,3],
-  [0,16,3,10],[0,3,3,10],[3,13,12,3]
-];
-const glyphs = {0:[0,1,2,3,4,5],1:[1,2],2:[0,1,6,4,3],3:[0,1,6,2,3],
-  4:[5,6,1,2],5:[0,5,6,2,3],6:[0,5,6,4,2,3],7:[0,1,2],
-  8:[0,1,2,3,4,5,6],9:[0,1,2,3,5,6]};
 
 let state = createGame();
 let aiMode = false, aiBusy = false, speed = 1, drag = null, aim = 90;
@@ -19,7 +13,7 @@ let lastTime = performance.now(), uiClock = 0;
 let aiClockTime = 0, aiTimeRemaining = 0;
 const AI_STEP = 0.03;
 const MAX_SPEED = 64;
-const worker = new Worker(new URL('./ai-worker.js?v=4', import.meta.url), {type:'module'});
+const worker = new Worker(new URL('./ai-worker.js?v=5', import.meta.url), {type:'module'});
 let jobId = 0;
 let best = Number(localStorage.getItem('break-brake-best') || 0);
 
@@ -31,21 +25,13 @@ function text(t,x,y,size=18,color='#f5f8ff',align='left',weight=700){
   ctx.font=`${weight} ${size}px Inter, system-ui, sans-serif`;
   ctx.textAlign=align;ctx.fillStyle=color;ctx.fillText(t,x,y);
 }
-function digit(n,x,y,scale=1,color='#efffff'){
-  ctx.fillStyle=color;
-  for(const id of glyphs[n]||[]) {const [a,b,w,h]=segments[id];ctx.fillRect(x+a*scale,y+b*scale,w*scale,h*scale);}
-}
-function digits(value,x,y,slots=3,scale=1,color='#efffff'){
-  const s=String(Math.max(0,Math.floor(value))).slice(-slots).padStart(slots,' ');
-  for(let i=0;i<slots;i++) if(s[i]!==' ') digit(Number(s[i]),x+i*21*scale,y,scale,color);
-}
 function drawBoard(){
   const grad=ctx.createLinearGradient(0,0,0,canvas.height);
   grad.addColorStop(0,'#152a4c');grad.addColorStop(1,'#0d1931');
   ctx.fillStyle=grad;ctx.fillRect(0,0,720,940);
   rounded(34,27,652,75,18,'#1b3558','#355677');
-  text('SCORE',62,54,12,'#91b6d0');digits(state.score,62,62,4,1,'#efffff');
-  text('BALLS',484,54,12,'#91b6d0');digits(state.ballCount,491,62,3,1,'#77e8db');
+  text('SCORE',62,54,12,'#91b6d0');drawNumber(ctx,state.score,SCORE_DIGITS);
+  text('BALLS',484,54,12,'#91b6d0');drawNumber(ctx,state.ballCount,BALL_DIGITS);
   text('TURN '+state.turn,364,72,16,'#90aeca','center');
   rounded(BX-8,BY-8,616,684,16,'#0a1a31','#335171');
   for(let row=0;row<ROWS;row++){
@@ -60,7 +46,7 @@ function drawBoard(){
         rounded(x+1.5,y+1.3,97,63.7,9,color);
         ctx.shadowBlur=0;
         rounded(x+4,y+3,91,9,5,'#ffffff34');
-        digits(hp,x+18,y+18,3,1,'#ffffff');
+        drawNumber(ctx,hp,BRICK_DIGITS,x,y);
       }else if(state.green[row][col]){
         const cx=x+50,cy=y+CELL_H*SCALE/2;
         ctx.shadowColor='#76f194';ctx.shadowBlur=20;ctx.fillStyle='#60e98a';

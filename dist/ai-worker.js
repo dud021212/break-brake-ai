@@ -1,11 +1,7 @@
 import {COLS,ROWS,CELL_H,MIN_ANGLE,MAX_ANGLE,createGame,emptyGrid,simulateTurn} from './core.js?v=4';
+import {readNumber, SCORE_DIGITS, BALL_DIGITS, BRICK_DIGITS} from './digits.js?v=5';
 
 const BX=60,BY=124;
-const segs=[[9,1],[15,8],[15,21],[9,27],[1,21],[1,8],[9,14]];
-const masks={
-  '1111110':0,'0110000':1,'1101101':2,'1111001':3,'0110011':4,
-  '1011011':5,'1011111':6,'1110000':7,'1111111':8,'1111011':9
-};
 let model=null;
 fetch('./model.json').then(r=>r.ok?r.json():null).then(m=>{model=m;}).catch(()=>{});
 function pixel(img,x,y){
@@ -14,19 +10,6 @@ function pixel(img,x,y){
   const k=(y*img.width+x)*4,d=img.data;
   return [d[k],d[k+1],d[k+2]];
 }
-function white(p){return p[0]>215&&p[1]>215&&p[2]>215;}
-function readDigit(img,x,y){
-  const bits=segs.map(([dx,dy])=>white(pixel(img,x+dx,y+dy))?'1':'0').join('');
-  return masks[bits]??null;
-}
-function readNumber(img,x,y,slots){
-  let value=0,any=false;
-  for(let i=0;i<slots;i++){
-    const d=readDigit(img,x+i*21,y);
-    if(d!==null){value=value*10+d;any=true;}
-  }
-  return any?value:null;
-}
 export function readState(img){
   const s=createGame(12345);
   s.grid=emptyGrid();s.green=emptyGrid();s.phase='aiming';s.balls=[];
@@ -34,12 +17,12 @@ export function readState(img){
     const x=BX+c*100,y=BY+r*CELL_H*100;
     const p=pixel(img,x+10,y+35);
     const brick=p[0]>45&&p[1]>95&&p[2]>95;
-    if(brick){s.grid[r][c]=readNumber(img,x+18,y+18,3)||1;continue;}
+    if(brick){s.grid[r][c]=readNumber(img,BRICK_DIGITS,x,y)||1;continue;}
     const q=pixel(img,x+58,y+CELL_H*50);
     if(q[1]>170&&q[0]<170&&q[2]<190)s.green[r][c]=1;
   }
-  const balls=readNumber(img,491,62,3);
-  const score=readNumber(img,62,62,4);
+  const balls=readNumber(img,BALL_DIGITS);
+  const score=readNumber(img,SCORE_DIGITS);
   s.ballCount=Math.max(1,balls||1);s.score=Math.max(1,score||1);
   s.turn=s.score;
   const ly=BY+(ROWS*CELL_H-.08)*100;
