@@ -1,4 +1,4 @@
-import {COLS,ROWS,CELL_H,MIN_ANGLE,MAX_ANGLE,createGame,emptyGrid,simulateTurn} from './core.js?v=5';
+import {COLS,ROWS,CELL_H,MIN_ANGLE,MAX_ANGLE,createGame,emptyGrid,simulateTurn} from './core.js?v=6';
 import {readNumber, SCORE_DIGITS, BALL_DIGITS, BRICK_DIGITS} from './digits.js?v=5';
 
 const BX=60,BY=124;

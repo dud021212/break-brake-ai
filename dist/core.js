@@ -48,6 +48,13 @@ export function launch(s, degrees) {
   s.angle = angle;
   s.phase = 'moving'; s.balls = []; s.launched = 0; s.launchClock = 0;
   s.nextX = null; s.collected = 0; s.hits = 0;
+  s.targetsLeft = 0;
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      if (s.grid[row][col] > 0) s.targetsLeft++;
+      if (s.green[row][col]) s.targetsLeft++;
+    }
+  }
   return true;
 }
 
@@ -73,6 +80,7 @@ function hitBrick(s, b, row, col) {
     b.vy *= -1; b.y = b.vy > 0 ? y1 + RADIUS : y0 - RADIUS;
   }
   s.grid[row][col]--; s.hits++;
+  if (s.grid[row][col] === 0) s.targetsLeft--;
   if (s.grid[row][col] < 0) s.grid[row][col] = 0;
   return true;
 }
@@ -90,7 +98,7 @@ function moveBall(s, b, dt) {
     if (s.green[r][c]) {
       const gx = c + 0.5, gy = (r + 0.5) * CELL_H;
       if ((b.x - gx) ** 2 + (b.y - gy) ** 2 < (RADIUS + 0.13) ** 2) {
-        s.green[r][c] = 0; s.collected++;
+        s.green[r][c] = 0; s.collected++; s.targetsLeft--;
       }
     }
     if (s.grid[r][c] > 0 && hitBrick(s, b, r, c)) return false;
@@ -139,7 +147,12 @@ export function stepGame(s, dt) {
       }
     }
     if (balls.length !== remaining) balls.length = remaining;
-    if (s.launched === s.ballCount && s.balls.length === 0) { endTurn(s); return; }
+    const allReturned = s.launched === s.ballCount && balls.length === 0;
+    if (allReturned || (s.targetsLeft === 0 && s.nextX !== null)) {
+      balls.length = 0;
+      endTurn(s);
+      return;
+    }
   }
 }
 

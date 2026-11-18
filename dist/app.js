@@ -1,4 +1,4 @@
-import {createGame, launch, stepGame, COLS, ROWS, CELL_H, RADIUS, FLOOR, MIN_ANGLE, MAX_ANGLE} from './core.js?v=5';
+import {createGame, launch, stepGame, COLS, ROWS, CELL_H, RADIUS, FLOOR, MIN_ANGLE, MAX_ANGLE} from './core.js?v=6';
 import {drawNumber, SCORE_DIGITS, BALL_DIGITS, BRICK_DIGITS} from './digits.js?v=5';
 
 const canvas = document.getElementById('game');
@@ -10,10 +10,11 @@ const colors = ['#43d3c7','#4bc6e6','#6d9fff','#a98cf1','#ed8bc9','#fcad7a'];
 let state = createGame();
 let aiMode = false, aiBusy = false, speed = 1, drag = null, aim = 90;
 let lastTime = performance.now(), needsRender = true;
-let aiClockTime = 0, aiTimeRemaining = 0;
-const AI_STEP = 0.03;
-const MAX_SPEED = 64;
-const worker = new Worker(new URL('./ai-worker.js?v=6', import.meta.url), {type:'module'});
+let aiClockTime = 0, aiTimeRemaining = 0, humanTimeRemaining = 0;
+const PHYSICS_STEP = 0.03;
+const PHYSICS_BUDGET_MS = 8;
+const MAX_SPEED = 1024;
+const worker = new Worker(new URL('./ai-worker.js?v=7', import.meta.url), {type:'module'});
 let jobId = 0;
 let best = Number(localStorage.getItem('break-brake-best') || 0);
 
@@ -109,6 +110,7 @@ function setMode(next){
   if(next===aiMode)return;
   stopAIClock();
   aiMode=next;aiBusy=false;jobId++;drag=null;
+  humanTimeRemaining=0;
   needsRender=true;
   el('aiStatus').textContent=next?'화면을 읽고 발사각을 계산할게요.':'AI 모드를 선택하면 현재 화면을 읽고 발사각을 찾습니다.';
   updateUI();
@@ -118,6 +120,7 @@ function setMode(next){
 function reset(){
   stopAIClock();
   jobId++;aiBusy=false;state=createGame();aim=90;drag=null;
+  humanTimeRemaining=0;
   render();updateUI();requestAI();
 }
 
@@ -153,6 +156,8 @@ el('aiButton').onclick=()=>setMode(true);
 el('restartButton').onclick=reset;el('retryButton').onclick=reset;
 el('speedButton').onclick=()=>{
   speed=speed<MAX_SPEED?speed*2:1;
+  aiTimeRemaining%=PHYSICS_STEP;
+  humanTimeRemaining=0;
   el('speedButton').textContent=`속도 ×${speed}`;
 };
 
@@ -164,16 +169,22 @@ function startAIClock(){
 function stopAIClock(){
   worker.postMessage({type:'stop-clock'});
 }
+function advancePhysics(remaining){
+  // Keep high-speed catch-up from monopolizing the UI thread.
+  const deadline=performance.now()+PHYSICS_BUDGET_MS;
+  while(remaining>=PHYSICS_STEP&&state.phase==='moving'&&performance.now()<deadline){
+    stepGame(state,PHYSICS_STEP);
+    remaining-=PHYSICS_STEP;
+    needsRender=true;
+  }
+  return state.phase==='moving'?remaining:0;
+}
 function advanceAITurn(){
   if(state.phase!=='moving')return;
   const now=performance.now();
-  aiTimeRemaining+=Math.min(2,(now-aiClockTime)/1000)*speed;
+  aiTimeRemaining=Math.min(2*speed,aiTimeRemaining+(now-aiClockTime)/1000*speed);
   aiClockTime=now;
-  while(aiTimeRemaining>=AI_STEP&&state.phase==='moving'){
-    stepGame(state,AI_STEP);
-    aiTimeRemaining-=AI_STEP;
-    needsRender=true;
-  }
+  aiTimeRemaining=advancePhysics(aiTimeRemaining);
   if(state.phase==='moving')return;
   stopAIClock();
   recordBest();
@@ -210,8 +221,12 @@ function recordBest(){
 function frame(t){
   const dt=Math.min(.05,(t-lastTime)/1000)*speed;lastTime=t;
   if(!aiMode&&state.phase==='moving'){
-    stepGame(state,dt);
-    needsRender=true;
+    if(speed>64){
+      humanTimeRemaining=advancePhysics(Math.min(2*speed,humanTimeRemaining+dt));
+    }else{
+      stepGame(state,dt);
+      needsRender=true;
+    }
     if(state.phase!=='moving'){
       recordBest();
       updateUI();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createGame,emptyGrid,endTurn,launch,stepGame,simulateTurn,spawnRow,COLS,ROWS} from '../dist/core.js';
+import {createGame,emptyGrid,endTurn,launch,stepGame,simulateTurn,spawnRow,COLS,ROWS,CELL_H,FLOOR,RADIUS} from '../dist/core.js';
 
 test('board has six columns, ten rows, and an empty first row',()=>{
   const s=createGame(42);
@@ -94,4 +94,42 @@ test('collecting a green circle increases the next turn ball count',()=>{
   assert.equal(s.phase,'aiming');
   assert.equal(s.ballCount,2);
   assert.equal(s.green[4][3],0);
+});
+
+test('a cleared board waits for the first return, then skips the rest of the volley',()=>{
+  const s=createGame(42);
+  s.grid=emptyGrid();s.green=emptyGrid();s.ballCount=1400;s.launcherX=3.5;
+  launch(s,90);
+  stepGame(s,.03);
+  assert.equal(s.phase,'moving');
+  assert.equal(s.nextX,null);
+  for(let i=0;i<100&&s.phase==='moving';i++)stepGame(s,.03);
+  assert.equal(s.phase,'aiming');
+  assert.equal(s.turn,2);
+  assert.ok(s.launched<s.ballCount);
+  assert.equal(s.balls.length,0);
+  assert.equal(s.launcherX,s.nextX);
+  assert.equal(s.green[1].filter(Boolean).length,1);
+});
+
+test('after the first return, the last pickup ends the turn only if all bricks are gone',()=>{
+  const s=createGame(42);
+  s.grid=emptyGrid();s.green=emptyGrid();s.ballCount=100;
+  s.grid[4][2]=1;s.green[3][1]=1;
+  launch(s,90);
+  s.launched=1;
+  s.balls.push({x:2,y:FLOOR-RADIUS,vx:0,vy:1});
+  stepGame(s,.0075);
+  assert.equal(s.phase,'moving');
+  assert.equal(s.nextX,2);
+  s.balls.push({x:2.5,y:4.5*CELL_H,vx:0,vy:-1});
+  stepGame(s,.0075);
+  assert.equal(s.grid[4][2],0);
+  assert.equal(s.phase,'moving');
+  s.balls.push({x:1.5,y:3.5*CELL_H,vx:0,vy:-1});
+  stepGame(s,.0075);
+  assert.equal(s.phase,'aiming');
+  assert.equal(s.launcherX,2);
+  assert.equal(s.ballCount,101);
+  assert.equal(s.balls.length,0);
 });
