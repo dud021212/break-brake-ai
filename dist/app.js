@@ -25,6 +25,16 @@ function text(t,x,y,size=18,color='#f5f8ff',align='left',weight=700){
   ctx.font=`${weight} ${size}px Inter, system-ui, sans-serif`;
   ctx.textAlign=align;ctx.fillStyle=color;ctx.fillText(t,x,y);
 }
+function drawNextLauncher(x,y){
+  const color='#ffda88';
+  ctx.beginPath();ctx.arc(x,y,17,0,Math.PI*2);
+  ctx.strokeStyle=color;ctx.lineWidth=3;ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x,y+20);ctx.lineTo(x-6,y+28);ctx.lineTo(x+6,y+28);
+  ctx.closePath();ctx.fillStyle=color;ctx.fill();
+  const labelX=Math.max(BX+70,Math.min(BX+COLS*SCALE-70,x));
+  text('다음 발사 위치',labelX,y+49,16,color,'center');
+}
 function drawBoard(){
   const grad=ctx.createLinearGradient(0,0,0,canvas.height);
   grad.addColorStop(0,'#152a4c');grad.addColorStop(1,'#0d1931');
@@ -72,6 +82,9 @@ function drawBoard(){
   for(const b of state.balls){
     ctx.shadowColor='#fff7c5';ctx.shadowBlur=10;ctx.fillStyle='#fff3c9';
     ctx.beginPath();ctx.arc(BX+b.x*SCALE,BY+b.y*SCALE,RADIUS*SCALE,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+  }
+  if(state.phase==='moving'&&state.nextX!==null){
+    drawNextLauncher(BX+state.nextX*SCALE,ly);
   }
   text(state.phase==='moving'?'공이 돌아올 때까지 기다려주세요':'발사 지점을 누르고 위로 드래그',360,867,16,'#abc3db','center',600);
   text(aiMode?'✦ AI PLAYING':'◉ HUMAN PLAYING',360,902,13,'#72e3d5','center',800);
