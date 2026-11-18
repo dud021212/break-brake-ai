@@ -1,4 +1,4 @@
-import {COLS,ROWS,CELL_H,createGame,emptyGrid,simulateTurn} from './core.js';
+import {COLS,ROWS,CELL_H,MIN_ANGLE,MAX_ANGLE,createGame,emptyGrid,simulateTurn} from './core.js?v=4';
 
 const BX=60,BY=124;
 const segs=[[9,1],[15,8],[15,21],[9,27],[1,21],[1,8],[9,14]];
@@ -70,20 +70,44 @@ function compare(a,b,s){
   const bv=b.collected*120+b.dangerDamage*3+b.damage+modelScore(s,b)*4;
   return av-bv;
 }
-function plan(s){
+export function plan(s){
   const results=[];
-  for(let a=11;a<=169;a+=4){const r=simulateTurn(s,a,1400);if(r)results.push(r);}
-  results.sort((a,b)=>compare(b,a,s));
-  const centers=results.slice(0,5).map(r=>r.angle);
-  const seen=new Set(results.map(r=>r.angle));
-  for(const center of centers)for(const offset of [-2,-1,1,2]){
-    const a=center+offset;if(a<11||a>169||seen.has(a))continue;
-    seen.add(a);const r=simulateTurn(s,a,1400);if(r)results.push(r);
+  const seen=new Set();
+  const min=MIN_ANGLE*100, max=MAX_ANGLE*100;
+  const rank=()=>results.sort((a,b)=>compare(b,a,s));
+  function evaluate(hundredths){
+    if(hundredths<min||hundredths>max||seen.has(hundredths))return;
+    seen.add(hundredths);
+    const result=simulateTurn(s,hundredths/100,1400);
+    if(result)results.push(result);
   }
-  results.sort((a,b)=>compare(b,a,s));
+  for(let angle=min;angle<=max;angle+=400)evaluate(angle);
+  evaluate(max);
+  for(const [step,radius] of [[100,200],[10,50],[1,5]]){
+    rank();
+    const centers=[];
+    for(const result of results){
+      const center=Math.round(result.angle*100);
+      if(centers.some(other=>Math.abs(center-other)<=radius))continue;
+      centers.push(center);
+      if(centers.length===5)break;
+    }
+    for(const center of centers){
+      for(let offset=-radius;offset<=radius;offset+=step)evaluate(center+offset);
+    }
+  }
+  rank();
   return {best:results[0],count:results.length};
 }
+let clock=null;
 self.onmessage=({data})=>{
+  if(data.type==='start-clock'||data.type==='stop-clock'){
+    clearInterval(clock);
+    clock=data.type==='start-clock'
+      ? setInterval(()=>self.postMessage({type:'tick',jobId:data.jobId}),30)
+      : null;
+    return;
+  }
   try{
     const s=readState(data.image);
     const {best,count}=plan(s);

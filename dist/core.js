@@ -19,7 +19,7 @@ export function createGame(seed = Date.now()) {
   const state = { seed: (seed | 0) || 1, grid: emptyGrid(), green: emptyGrid(), score: 1,
     ballCount: 1, launcherX: 3, phase: 'aiming', balls: [], launched: 0, launchClock: 0,
     nextX: null, collected: 0, turn: 1, hits: 0, gameOver: false };
-  for (let row = 2; row <= 4; row++) spawnRow(state, row, 1 + (4 - row));
+  spawnRow(state);
   return state;
 }
 
@@ -35,13 +35,11 @@ export function spawnRow(s, row = 1, count = 3) {
     const j = Math.floor(random(s) * (i + 1));
     [cols[i], cols[j]] = [cols[j], cols[i]];
   }
-  for (let i = 0; i < Math.min(count, COLS - 1); i++) {
+  const brickCount = Math.min(count, COLS - 1);
+  for (let i = 0; i < brickCount; i++) {
     s.grid[row][cols[i]] = s.turn;
   }
-  if (random(s) < 0.83) {
-    const free = cols.slice(Math.min(count, COLS - 1));
-    if (free.length) s.green[row][free[0]] = 1;
-  }
+  s.green[row][cols[brickCount]] = 1;
 }
 
 export function launch(s, degrees) {

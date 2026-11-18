@@ -13,6 +13,30 @@ test('new bricks cannot spawn in the reserved first or defeat row',()=>{
   assert.throws(()=>spawnRow(s,0),RangeError);
   assert.throws(()=>spawnRow(s,9),RangeError);
 });
+test('only row two contains bricks and an extra ball at game start',()=>{
+  const s=createGame(42);
+  assert.ok(s.grid[1].some(hp=>hp===1));
+  assert.equal(s.green[1].filter(Boolean).length,1);
+  for(let row=0;row<ROWS;row++){
+    if(row===1)continue;
+    assert.ok(s.grid[row].every(hp=>hp===0));
+    assert.ok(s.green[row].every(value=>value===0));
+  }
+});
+test('the starting board and each new row supply exactly one extra ball',()=>{
+  for(let seed=1;seed<=100;seed++){
+    const s=createGame(seed);
+    assert.equal(s.green.flat().filter(Boolean).length,1);
+    for(let turn=0;turn<4;turn++){
+      const previousGreen=s.green[1].slice();
+      endTurn(s);
+      const newGreen=s.green[1];
+      assert.equal(newGreen.filter(Boolean).length,1);
+      assert.equal(s.grid[1][newGreen.indexOf(1)],0);
+      assert.deepEqual(s.green[2],previousGreen);
+    }
+  }
+});
 test('new bricks start at one and gain exactly one HP per turn',()=>{
   const s=createGame(42);
   const initialBricks=s.grid.flat().filter(Boolean);

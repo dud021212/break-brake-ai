@@ -1,4 +1,4 @@
-import {createGame, launch, stepGame, COLS, ROWS, CELL_H, RADIUS, FLOOR, MIN_ANGLE, MAX_ANGLE} from './core.js';
+import {createGame, launch, stepGame, COLS, ROWS, CELL_H, RADIUS, FLOOR, MIN_ANGLE, MAX_ANGLE} from './core.js?v=4';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d', {willReadFrequently: true});
@@ -16,7 +16,10 @@ const glyphs = {0:[0,1,2,3,4,5],1:[1,2],2:[0,1,6,4,3],3:[0,1,6,2,3],
 let state = createGame();
 let aiMode = false, aiBusy = false, speed = 1, drag = null, aim = 90;
 let lastTime = performance.now(), uiClock = 0;
-let worker = new Worker('./ai-worker.js', {type:'module'});
+let aiClockTime = 0, aiTimeRemaining = 0;
+const AI_STEP = 0.03;
+const MAX_SPEED = 64;
+const worker = new Worker(new URL('./ai-worker.js?v=4', import.meta.url), {type:'module'});
 let jobId = 0;
 let best = Number(localStorage.getItem('break-brake-best') || 0);
 
@@ -101,11 +104,19 @@ function updateUI(){
   if(state.phase==='game_over') el('finalScore').textContent=`${state.score-1}턴 생존 · 공 ${state.ballCount}개`;
 }
 function setMode(next){
+  if(next===aiMode)return;
+  stopAIClock();
   aiMode=next;aiBusy=false;jobId++;drag=null;
   el('aiStatus').textContent=next?'화면을 읽고 발사각을 계산할게요.':'AI 모드를 선택하면 현재 화면을 읽고 발사각을 찾습니다.';
   updateUI();
+  if(aiMode&&state.phase==='moving')startAIClock();
+  else if(aiMode)requestAI();
 }
-function reset(){jobId++;aiBusy=false;state=createGame();aim=90;drag=null;render();updateUI();}
+function reset(){
+  stopAIClock();
+  jobId++;aiBusy=false;state=createGame();aim=90;drag=null;
+  render();updateUI();requestAI();
+}
 
 function localPoint(ev){
   const r=canvas.getBoundingClientRect();
@@ -132,32 +143,66 @@ canvas.addEventListener('pointercancel',()=>{drag=null;});
 el('humanButton').onclick=()=>setMode(false);
 el('aiButton').onclick=()=>setMode(true);
 el('restartButton').onclick=reset;el('retryButton').onclick=reset;
-el('speedButton').onclick=()=>{speed=speed===1?2:speed===2?4:1;el('speedButton').textContent=`속도 ×${speed}`;};
+el('speedButton').onclick=()=>{
+  speed=speed<MAX_SPEED?speed*2:1;
+  el('speedButton').textContent=`속도 ×${speed}`;
+};
 
+function startAIClock(){
+  aiClockTime=performance.now();
+  aiTimeRemaining=0;
+  worker.postMessage({type:'start-clock',jobId});
+}
+function stopAIClock(){
+  worker.postMessage({type:'stop-clock'});
+}
+function advanceAITurn(){
+  if(state.phase!=='moving')return;
+  const now=performance.now();
+  aiTimeRemaining+=Math.min(2,(now-aiClockTime)/1000)*speed;
+  aiClockTime=now;
+  while(aiTimeRemaining>=AI_STEP&&state.phase==='moving'){
+    stepGame(state,AI_STEP);
+    aiTimeRemaining-=AI_STEP;
+  }
+  if(state.phase==='moving')return;
+  stopAIClock();
+  recordBest();
+  updateUI();
+  requestAI();
+}
 worker.onmessage=({data})=>{
-  if(data.jobId!==jobId||!aiMode||state.phase!=='aiming')return;
+  if(data.jobId!==jobId||!aiMode)return;
+  if(data.type==='tick'){
+    advanceAITurn();
+    return;
+  }
+  if(state.phase!=='aiming')return;
   aiBusy=false;
   if(data.error){el('aiStatus').textContent='탐색 오류: '+data.error;return;}
   aim=data.angle;
-  el('aiAngle').textContent=`${data.angle.toFixed(1)}°`;
+  el('aiAngle').textContent=`${data.angle.toFixed(2)}°`;
   el('aiCandidates').textContent=String(data.candidates);
   el('aiStatus').textContent=data.survive?'생존 가능한 각도를 선택했습니다.':'위험을 줄이는 각도를 선택했습니다.';
-  launch(state,data.angle);
+  if(launch(state,data.angle))startAIClock();
 };
 function requestAI(){
   if(!aiMode||aiBusy||state.phase!=='aiming')return;
   aiBusy=true;jobId++;
   el('aiStatus').textContent='화면을 분석하고 각도를 비교하는 중…';
+  render();
   const image=ctx.getImageData(0,0,720,940);
   worker.postMessage({jobId,image},[image.data.buffer]);
 }
+function recordBest(){
+  if(state.phase==='game_over'&&state.score-1>best){best=state.score-1;localStorage.setItem('break-brake-best',String(best));}
+}
 function frame(t){
   const dt=Math.min(.05,(t-lastTime)/1000)*speed;lastTime=t;
-  if(state.phase==='moving')stepGame(state,dt);
-  if(state.phase==='game_over'&&state.score-1>best){best=state.score-1;localStorage.setItem('break-brake-best',String(best));}
+  if(!aiMode&&state.phase==='moving')stepGame(state,dt);
+  recordBest();
   render();
   if(t-uiClock>120){updateUI();uiClock=t;}
-  requestAI();
   requestAnimationFrame(frame);
 }
 updateUI();render();requestAnimationFrame(frame);
