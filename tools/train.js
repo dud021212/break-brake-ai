@@ -1,60 +1,210 @@
-import {createGame,random,simulateTurn} from '../dist/core.js';
-import {writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {readFileSync, renameSync, writeFileSync} from 'node:fs';
+import {availableParallelism} from 'node:os';
+import {Worker, isMainThread, parentPort, workerData} from 'node:worker_threads';
+import {CELL_H, FLOOR, MIN_ANGLE, MAX_ANGLE, createGame, random, simulateTurn} from '../dist/core.js';
 
-const samples=[];
-const angles=[15,35,55,75,95,115,135,155];
-const stateCount=Number(process.env.STATES||48);
-function features(s,r){
-  const total=s.grid.flat().reduce((a,b)=>a+b,0);
-  const danger=s.grid[8].reduce((a,b)=>a+b,0);
-  const greens=s.green.flat().reduce((a,b)=>a+b,0);
-  return [r.angle/180,s.ballCount/30,s.launcherX/6,total/150,danger/70,
-    greens/10,r.damage/150,r.dangerDamage/70,r.collected/5,r.nextX/6,r.survive?1:0];
+const DIMENSIONS = 12; // Intercept plus the eleven browser model features.
+const SEED = 10001;
+const SHARD_SIZE = 10000;
+const MAX_EPISODE_TURN = 100;
+const ROOT = new URL('../', import.meta.url);
+const MODEL = new URL('dist/model.json', ROOT);
+
+function statistics() {
+  return {count:0, xx:new Float64Array(DIMENSIONS ** 2), xy:new Float64Array(DIMENSIONS), yy:0};
 }
-for(let n=0;n<stateCount;n++){
-  const s=createGame(10001+n*719);
-  s.grid=Array.from({length:10},()=>Array(6).fill(0));
-  s.green=Array.from({length:10},()=>Array(6).fill(0));
-  s.score=3+Math.floor(random(s)*30);
-  s.turn=s.score;
-  s.ballCount=2+Math.floor(random(s)*14);
-  s.launcherX=.2+random(s)*5.6;
-  for(let r=1;r<=8;r++)for(let c=0;c<6;c++){
-    if(random(s)<(.09+r*.025))s.grid[r][c]=1+Math.floor(random(s)*Math.min(25,s.score+2));
-    else if(random(s)<.035)s.green[r][c]=1;
+
+function accumulate(stats, x, y) {
+  stats.count++;
+  stats.yy += y*y;
+  for(let i=0;i<DIMENSIONS;i++){
+    stats.xy[i]+=x[i]*y;
+    for(let j=0;j<=i;j++)stats.xx[i*DIMENSIONS+j]+=x[i]*x[j];
   }
-  for(const angle of angles){
-    const result=simulateTurn(s,angle,1000,true);
-    if(!result||result.truncated)continue;
-    let future=0;
-    if(result.survive){
-      for(const nextAngle of [25,55,85,115,145]){
-        const next=simulateTurn(result.state,nextAngle,1000);
-        if(!next||next.truncated)continue;
-        const value=(next.survive?1:0)+.005*next.damage+.08*next.collected;
-        future=Math.max(future,value);
-      }
+}
+
+function merge(target, source) {
+  target.count+=source.count;
+  target.yy+=source.yy;
+  for(let i=0;i<target.xx.length;i++)target.xx[i]+=source.xx[i];
+  for(let i=0;i<target.xy.length;i++)target.xy[i]+=source.xy[i];
+}
+
+function sum(row) {
+  return row.reduce((total,n)=>total+n,0);
+}
+
+function quantize(angle) {
+  return Math.round(100*Math.max(MIN_ANGLE,Math.min(MAX_ANGLE,angle)))/100;
+}
+
+function aimAt(state, target, entropy) {
+  const angle=Math.atan2(FLOOR-(target.row+.5)*CELL_H,target.col+.5-state.launcherX)*180/Math.PI;
+  return quantize(angle+(random(entropy)-.5)*12);
+}
+
+function anglesFor(state, entropy, count) {
+  const pickup=[], threat=[];
+  for(let row=8;row>=1;row--){
+    for(let col=0;col<6;col++){
+      if(state.green[row][col])pickup.push({row,col});
+      if(row>=7&&state.grid[row][col])threat.push({row,col});
     }
-    const target=Math.min(2,Math.max(0,future));
-    samples.push({x:features(s,result),y:target,group:n});
   }
-  if((n+1)%12===0)process.stdout.write(`generated ${n+1}/${stateCount} states\n`);
-}
-if(samples.length<20)throw Error('Not enough complete turns. Increase STATES or simulation budget.');
-const train=samples.filter(x=>x.group%5!==0),valid=samples.filter(x=>x.group%5===0);
-const weights=Array(11).fill(0),bias={value:0};
-const rate=.065,lambda=.0008;
-for(let epoch=0;epoch<900;epoch++){
-  for(const row of train){
-    const pred=bias.value+row.x.reduce((v,x,i)=>v+x*weights[i],0);
-    const err=pred-row.y;
-    for(let i=0;i<11;i++)weights[i]-=rate*(err*row.x[i]+lambda*weights[i]);
-    bias.value-=rate*err;
+  const angles=new Set();
+  for(const targets of [threat,pickup]){
+    if(targets.length)angles.add(aimAt(state,targets[Math.floor(random(entropy)*targets.length)],entropy));
+    if(angles.size===count-1)break;
   }
+  while(angles.size<count){
+    angles.add(quantize(MIN_ANGLE+random(entropy)*(MAX_ANGLE-MIN_ANGLE)));
+  }
+  return angles;
 }
-function mae(rows){return rows.reduce((a,r)=>a+Math.abs(bias.value+r.x.reduce((v,x,i)=>v+x*weights[i],0)-r.y),0)/rows.length;}
-const output={format:'linear-v1',featureCount:11,weights:weights.map(x=>Number(x.toFixed(7))),
-  bias:Number(bias.value.toFixed(7)),training:{states:stateCount,samples:samples.length,
-    trainMAE:Number(mae(train).toFixed(4)),validationMAE:Number(mae(valid).toFixed(4)),seed:10001}};
-writeFileSync(new URL('../dist/model.json',import.meta.url),JSON.stringify(output));
-process.stdout.write(`model saved: ${JSON.stringify(output.training)}\n`);
+
+function rank(a,b) {
+  if(a.survive!==b.survive)return Number(b.survive)-Number(a.survive);
+  if(!a.survive&&a.remaining9!==b.remaining9)return a.remaining9-b.remaining9;
+  return (b.collected-a.collected)*120+(b.dangerDamage-a.dangerDamage)*3+b.damage-a.damage;
+}
+
+function collectShard(index, states) {
+  const entropy={seed:SEED+index*104729};
+  const train=statistics(), validation=statistics();
+  let state, stats, accepted=0, episodes=0, maxTurn=0, maxBalls=0;
+  const turnRanges={early:0, middle:0, late:0};
+  while(accepted<states){
+    if(!state||state.gameOver||state.turn>MAX_EPISODE_TURN){
+      state=createGame(1+Math.floor(random(entropy)*2147483646));
+      stats=random(entropy)<.2?validation:train;
+      episodes++;
+    }
+    const results=Array.from(anglesFor(state,entropy,4),
+      angle=>simulateTurn(state,angle,1400,true)).filter(result=>!result.truncated);
+    if(!results.length){state=null;continue;}
+    accepted++;
+    maxTurn=Math.max(maxTurn,state.turn);
+    maxBalls=Math.max(maxBalls,state.ballCount);
+    turnRanges[state.turn<=10?'early':state.turn<=32?'middle':'late']++;
+    const total=state.grid.reduce((n,row)=>n+sum(row),0);
+    const danger=sum(state.grid[8]);
+    const greens=state.green.reduce((n,row)=>n+sum(row),0);
+    for(const result of results){
+      let future=0;
+      if(result.survive){
+        let completed=false;
+        for(const angle of anglesFor(result.state,entropy,2)){
+          const next=simulateTurn(result.state,angle,1400);
+          if(next.truncated)continue;
+          completed=true;
+          future=Math.max(future,Number(next.survive)+.005*next.damage+.08*next.collected);
+        }
+        if(!completed)continue;
+      }
+      const x=[1,result.angle/180,state.ballCount/30,state.launcherX/6,total/150,danger/70,
+        greens/10,result.damage/150,result.dangerDamage/70,result.collected/5,result.nextX/6,
+        Number(result.survive)];
+      accumulate(stats,x,Math.min(2,future));
+    }
+    results.sort(rank);
+    // Occasionally explore a different surviving shot to vary reachable boards.
+    const surviving=results.filter(result=>result.survive);
+    state=(surviving.length>1&&random(entropy)<.12
+      ? surviving[Math.floor(random(entropy)*surviving.length)]
+      : results[0]).state;
+  }
+  return {train,validation,states,episodes,maxTurn,maxBalls,turnRanges};
+}
+
+function fit(stats) {
+  const {count,xx,xy}=stats;
+  const ridge=.0008;
+  const rows=Array.from({length:DIMENSIONS},(_,i)=>[
+    ...Array.from({length:DIMENSIONS},(_,j)=>xx[Math.max(i,j)*DIMENSIONS+Math.min(i,j)]/count
+      +(i===j&&i!==0?ridge:0)),
+    xy[i]/count
+  ]);
+  for(let i=0;i<DIMENSIONS;i++){
+    let pivot=i;
+    for(let j=i+1;j<DIMENSIONS;j++)if(Math.abs(rows[j][i])>Math.abs(rows[pivot][i]))pivot=j;
+    [rows[i],rows[pivot]]=[rows[pivot],rows[i]];
+    const divisor=rows[i][i];
+    if(Math.abs(divisor)<1e-12)throw Error('Training system is singular.');
+    for(let k=i;k<=DIMENSIONS;k++)rows[i][k]/=divisor;
+    for(let j=0;j<DIMENSIONS;j++){
+      if(j===i)continue;
+      const factor=rows[j][i];
+      for(let k=i;k<=DIMENSIONS;k++)rows[j][k]-=factor*rows[i][k];
+    }
+  }
+  return rows.map(row=>Number(row[DIMENSIONS].toFixed(7)));
+}
+
+function rmse(stats, coefficients) {
+  let error=stats.yy;
+  for(let i=0;i<DIMENSIONS;i++){
+    error-=2*coefficients[i]*stats.xy[i];
+    for(let j=0;j<=i;j++){
+      error+=(i===j?1:2)*coefficients[i]*coefficients[j]*stats.xx[i*DIMENSIONS+j];
+    }
+  }
+  return Number(Math.sqrt(Math.max(0,error)/stats.count).toFixed(5));
+}
+
+function workerResult(worker) {
+  return new Promise((resolve,reject)=>{
+    worker.once('message',resolve);
+    worker.once('error',reject);
+    worker.once('exit',code=>{if(code!==0)reject(Error(`Training worker exited with code ${code}`));});
+  });
+}
+
+async function trainModel() {
+  const requested=Number(process.env.STATES??'48');
+  const parallel=Number(process.env.WORKERS??Math.min(4,availableParallelism()));
+  if(!Number.isSafeInteger(requested)||requested<20||!Number.isSafeInteger(parallel)||parallel<1){
+    throw Error('STATES must be an integer of at least 20 and WORKERS a positive integer.');
+  }
+  const outputURL=process.env.MODEL_PATH?new URL(process.env.MODEL_PATH,`file://${process.cwd()}/`):MODEL;
+  const temporaryURL=new URL(outputURL.href+`.${process.pid}.tmp`);
+  const engineSHA256=createHash('sha256').update(readFileSync(new URL('dist/core.js',ROOT))).digest('hex');
+  const train=statistics(), validation=statistics();
+  let episodes=0, maxTurn=0, maxBalls=0, states=0;
+  const turnRanges={early:0,middle:0,late:0};
+  const shards=Math.ceil(requested/SHARD_SIZE);
+  for(let start=0;start<shards;start+=parallel){
+    const batch=Array.from({length:Math.min(parallel,shards-start)},(_,offset)=>{
+      const index=start+offset;
+      return workerResult(new Worker(new URL(import.meta.url),{
+        workerData:{index,states:Math.min(SHARD_SIZE,requested-index*SHARD_SIZE)}
+      }));
+    });
+    for(const result of await Promise.all(batch)){
+      states+=result.states;
+      episodes+=result.episodes;
+      maxTurn=Math.max(maxTurn,result.maxTurn);
+      maxBalls=Math.max(maxBalls,result.maxBalls);
+      for(const key of Object.keys(turnRanges))turnRanges[key]+=result.turnRanges[key];
+      merge(train,result.train);
+      merge(validation,result.validation);
+    }
+    console.log(`Generated ${states}/${requested} reachable states (${train.count+validation.count} samples)`);
+  }
+  if(train.count<20)throw Error('Not enough completed training samples.');
+  const [bias,...weights]=fit(train);
+  const coefficients=[bias,...weights];
+  const engineAtEnd=createHash('sha256').update(readFileSync(new URL('dist/core.js',ROOT))).digest('hex');
+  if(engineAtEnd!==engineSHA256)throw Error('Game engine changed during training. Retry on the final rules.');
+  const model={format:'linear-v1',featureCount:weights.length,weights,bias,training:{
+    states,samples:train.count+validation.count,trainSamples:train.count,validationSamples:validation.count,
+    trainRMSE:rmse(train,coefficients),validationRMSE:validation.count?rmse(validation,coefficients):null,
+    seed:SEED,episodes,maxTurn,maxBalls,turnRanges,engineSHA256,dataset:'engine-rollouts-v1'
+  }};
+  writeFileSync(temporaryURL,JSON.stringify(model)+'\n');
+  renameSync(temporaryURL,outputURL);
+  console.log(JSON.stringify(model.training));
+}
+
+if(isMainThread)await trainModel();
+else parentPort.postMessage(collectShard(workerData.index,workerData.states));

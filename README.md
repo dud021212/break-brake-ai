@@ -17,7 +17,9 @@ npm test
 npm run train
 ```
 
-`STATES=100000 npm run train`은 10만 개의 보드 상태를 생성해 처음부터 학습하고 `dist/model.json`을 갱신합니다. 이전 결과를 보관하려면 실행 전에 모델 파일을 복사하세요. 학습 로그의 검증 MAE와 실제 게임에서의 생존 턴 수를 함께 비교하세요.
+`STATES=1000000 npm run train`은 게임 엔진으로 여러 게임을 진행하면서 보드 상태 100만 개를 수집합니다. 매 게임은 실제 초기 배치로 시작하고 최대 100턴까지 진행합니다. 학습과 검증은 게임 단위로 분리합니다. 학습이 끝나면 `dist/model.json`을 갱신하며, 사용한 게임 엔진의 SHA-256과 검증 RMSE를 기록합니다.
+
+`WORKERS`로 병렬 작업 수를 지정할 수 있습니다. 다른 모델을 보존하며 시험하려면 `MODEL_PATH=/tmp/break-brake-model.json STATES=800 npm run train`처럼 출력 경로를 지정하세요. 모델 간 플레이 성능은 같은 시드에서 생존 턴 수로 비교하세요.
 
 ## GitHub Pages
 
