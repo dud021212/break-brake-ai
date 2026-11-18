@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="스와이프로 벽돌을 깨고, 브라우저 AI의 플레이도 관찰하세요.">
+  <title>Break Brake — 스와이프 벽돌깨기 AI</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div><p class="eyebrow">SWIPE · SIMULATE · SURVIVE</p><h1>BREAK<span>BRAKE</span></h1></div>
+      <div class="live-pill"><span class="live-dot"></span> 브라우저에서 실행 중</div>
+    </header>
+    <section class="layout" aria-label="게임과 조작">
+      <div class="game-frame">
+        <canvas id="game" width="720" height="940" aria-label="스와이프 벽돌깨기 게임판"></canvas>
+        <div id="overlay" class="overlay hidden" role="status"><div class="overlay-card"><p class="eyebrow">RUN COMPLETE</p><h2>게임 종료</h2><p id="finalScore"></p><button id="retryButton" class="primary">다시 시작</button></div></div>
+      </div>
+      <aside class="panel">
+        <div class="panel-top"><p class="eyebrow">CONTROL ROOM</p><h2>오늘은 어디로 쏠까?</h2><p>드래그해 각도를 정하고 손을 떼면 발사합니다. 공이 모두 돌아오면 다음 턴이 시작돼요.</p></div>
+        <div class="mode-card"><div class="mode-head"><div><small>PLAY MODE</small><strong id="modeLabel">직접 플레이</strong></div><span id="statusDot" class="status-dot"></span></div><div class="segmented"><button id="humanButton" class="active" aria-pressed="true">직접 플레이</button><button id="aiButton" aria-pressed="false">AI 플레이</button></div></div>
+        <div class="stats"><div><small>현재 턴</small><strong id="turnStat">1</strong></div><div><small>보유 공</small><strong id="ballStat">1</strong></div><div><small>최고 기록</small><strong id="bestStat">0</strong></div></div>
+        <div class="action-row"><button id="restartButton" class="outline">새 게임</button><button id="speedButton" class="outline">속도 ×1</button></div>
+        <div class="ai-box"><div class="ai-title"><span class="spark">✦</span><strong>AI 생각</strong></div><p id="aiStatus">AI 모드를 선택하면 현재 화면을 읽고 발사각을 찾습니다.</p><div class="angle-line"><span>선택한 각도</span><strong id="aiAngle">—</strong></div><div class="angle-line"><span>평가한 후보</span><strong id="aiCandidates">—</strong></div></div>
+        <div class="rule-note"><strong>생존 규칙</strong><p>9행의 벽돌은 아직 안전합니다. 다음 하강에서 10행에 닿기 전에 깨야 합니다. 초록 원을 맞히면 공이 하나 늘어납니다.</p></div>
+      </aside>
+    </section>
+    <footer><span>6 × 10 BOARD · ONE ANGLE PER TURN</span><span>모든 계산은 이 브라우저에서 실행됩니다.</span></footer>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
