@@ -1,4 +1,4 @@
-import {createGame, launch, stepGame, COLS, ROWS, CELL_H, RADIUS, FLOOR, MIN_ANGLE, MAX_ANGLE} from './core.js?v=4';
+import {createGame, launch, stepGame, COLS, ROWS, CELL_H, RADIUS, FLOOR, MIN_ANGLE, MAX_ANGLE} from './core.js?v=5';
 import {drawNumber, SCORE_DIGITS, BALL_DIGITS, BRICK_DIGITS} from './digits.js?v=5';
 
 const canvas = document.getElementById('game');
@@ -9,11 +9,11 @@ const colors = ['#43d3c7','#4bc6e6','#6d9fff','#a98cf1','#ed8bc9','#fcad7a'];
 
 let state = createGame();
 let aiMode = false, aiBusy = false, speed = 1, drag = null, aim = 90;
-let lastTime = performance.now(), uiClock = 0;
+let lastTime = performance.now(), needsRender = true;
 let aiClockTime = 0, aiTimeRemaining = 0;
 const AI_STEP = 0.03;
 const MAX_SPEED = 64;
-const worker = new Worker(new URL('./ai-worker.js?v=5', import.meta.url), {type:'module'});
+const worker = new Worker(new URL('./ai-worker.js?v=6', import.meta.url), {type:'module'});
 let jobId = 0;
 let best = Number(localStorage.getItem('break-brake-best') || 0);
 
@@ -76,7 +76,10 @@ function drawBoard(){
   text(state.phase==='moving'?'공이 돌아올 때까지 기다려주세요':'발사 지점을 누르고 위로 드래그',360,867,16,'#abc3db','center',600);
   text(aiMode?'✦ AI PLAYING':'◉ HUMAN PLAYING',360,902,13,'#72e3d5','center',800);
 }
-function render(){drawBoard();}
+function render(){
+  drawBoard();
+  needsRender=false;
+}
 function updateUI(){
   el('turnStat').textContent=state.turn;
   el('ballStat').textContent=state.ballCount;
@@ -93,6 +96,7 @@ function setMode(next){
   if(next===aiMode)return;
   stopAIClock();
   aiMode=next;aiBusy=false;jobId++;drag=null;
+  needsRender=true;
   el('aiStatus').textContent=next?'화면을 읽고 발사각을 계산할게요.':'AI 모드를 선택하면 현재 화면을 읽고 발사각을 찾습니다.';
   updateUI();
   if(aiMode&&state.phase==='moving')startAIClock();
@@ -116,14 +120,19 @@ function angleFrom(p){
 canvas.addEventListener('pointerdown',ev=>{
   if(aiMode||state.phase!=='aiming')return;
   drag=localPoint(ev);canvas.setPointerCapture(ev.pointerId);
-  aim=angleFrom(drag);render();
+  aim=angleFrom(drag);needsRender=true;
 });
-canvas.addEventListener('pointermove',ev=>{if(!drag)return;aim=angleFrom(localPoint(ev));render();});
+canvas.addEventListener('pointermove',ev=>{
+  if(!drag)return;
+  const nextAim=angleFrom(localPoint(ev));
+  if(nextAim===aim)return;
+  aim=nextAim;needsRender=true;
+});
 canvas.addEventListener('pointerup',ev=>{
   if(!drag)return;
   const p=localPoint(ev),distance=Math.hypot(p.x-drag.x,p.y-drag.y);
   drag=null;if(distance>12)launch(state,angleFrom(p));
-  render();
+  needsRender=true;
 });
 canvas.addEventListener('pointercancel',()=>{drag=null;});
 el('humanButton').onclick=()=>setMode(false);
@@ -150,6 +159,7 @@ function advanceAITurn(){
   while(aiTimeRemaining>=AI_STEP&&state.phase==='moving'){
     stepGame(state,AI_STEP);
     aiTimeRemaining-=AI_STEP;
+    needsRender=true;
   }
   if(state.phase==='moving')return;
   stopAIClock();
@@ -167,6 +177,7 @@ worker.onmessage=({data})=>{
   aiBusy=false;
   if(data.error){el('aiStatus').textContent='탐색 오류: '+data.error;return;}
   aim=data.angle;
+  needsRender=true;
   el('aiAngle').textContent=`${data.angle.toFixed(2)}°`;
   el('aiCandidates').textContent=String(data.candidates);
   el('aiStatus').textContent=data.survive?'생존 가능한 각도를 선택했습니다.':'위험을 줄이는 각도를 선택했습니다.';
@@ -185,10 +196,15 @@ function recordBest(){
 }
 function frame(t){
   const dt=Math.min(.05,(t-lastTime)/1000)*speed;lastTime=t;
-  if(!aiMode&&state.phase==='moving')stepGame(state,dt);
-  recordBest();
-  render();
-  if(t-uiClock>120){updateUI();uiClock=t;}
+  if(!aiMode&&state.phase==='moving'){
+    stepGame(state,dt);
+    needsRender=true;
+    if(state.phase!=='moving'){
+      recordBest();
+      updateUI();
+    }
+  }
+  if(needsRender)render();
   requestAnimationFrame(frame);
 }
 updateUI();render();requestAnimationFrame(frame);

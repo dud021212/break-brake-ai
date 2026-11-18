@@ -1,4 +1,4 @@
-import {COLS,ROWS,CELL_H,MIN_ANGLE,MAX_ANGLE,createGame,emptyGrid,simulateTurn} from './core.js?v=4';
+import {COLS,ROWS,CELL_H,MIN_ANGLE,MAX_ANGLE,createGame,emptyGrid,simulateTurn} from './core.js?v=5';
 import {readNumber, SCORE_DIGITS, BALL_DIGITS, BRICK_DIGITS} from './digits.js?v=5';
 
 const BX=60,BY=124;
@@ -34,42 +34,49 @@ export function readState(img){
   s.launcherX=lo<0?3:Math.max(.12,Math.min(5.88,((lo+hi)/2-BX)/100));
   return s;
 }
-function features(s,r){
-  const total=s.grid.flat().reduce((a,b)=>a+b,0);
-  const danger=s.grid[8].reduce((a,b)=>a+b,0);
-  const greens=s.green.flat().reduce((a,b)=>a+b,0);
-  return [r.angle/180,s.ballCount/30,s.launcherX/6,total/150,danger/70,
-    greens/10,r.damage/150,r.dangerDamage/70,r.collected/5,r.nextX/6,r.survive?1:0];
+function makeScorer(s,currentModel){
+  const weights=currentModel?.weights;
+  if(weights?.length!==11)return ()=>0;
+  const boardFeatures=[
+    s.ballCount/30,s.launcherX/6,
+    s.grid.flat().reduce((a,b)=>a+b,0)/150,
+    s.grid[8].reduce((a,b)=>a+b,0)/70,
+    s.green.flat().reduce((a,b)=>a+b,0)/10
+  ];
+  return r=>{
+    const features=[r.angle/180,...boardFeatures,r.damage/150,r.dangerDamage/70,
+      r.collected/5,r.nextX/6,r.survive?1:0];
+    return currentModel.bias+features.reduce((sum,value,index)=>sum+value*weights[index],0);
+  };
 }
-function modelScore(s,r){
-  if(!model?.weights||model.weights.length!==11)return 0;
-  const f=features(s,r);
-  return model.bias+f.reduce((a,v,i)=>a+v*model.weights[i],0);
-}
-function compare(a,b,s){
-  if(a.survive!==b.survive)return a.survive?1:-1;
-  if(!a.survive&&a.remaining9!==b.remaining9)return b.remaining9-a.remaining9;
-  const av=a.collected*120+a.dangerDamage*3+a.damage+modelScore(s,a)*4;
-  const bv=b.collected*120+b.dangerDamage*3+b.damage+modelScore(s,b)*4;
-  return av-bv;
+function compare(a,b){
+  if(a.result.survive!==b.result.survive)return a.result.survive?1:-1;
+  if(!a.result.survive&&a.result.remaining9!==b.result.remaining9){
+    return b.result.remaining9-a.result.remaining9;
+  }
+  return a.score-b.score;
 }
 export function plan(s){
   const results=[];
   const seen=new Set();
   const min=MIN_ANGLE*100, max=MAX_ANGLE*100;
-  const rank=()=>results.sort((a,b)=>compare(b,a,s));
+  const modelScore=makeScorer(s,model);
+  const rank=()=>results.sort((a,b)=>compare(b,a));
   function evaluate(hundredths){
     if(hundredths<min||hundredths>max||seen.has(hundredths))return;
     seen.add(hundredths);
     const result=simulateTurn(s,hundredths/100,1400);
-    if(result)results.push(result);
+    if(result){
+      const score=result.collected*120+result.dangerDamage*3+result.damage+modelScore(result)*4;
+      results.push({result,score});
+    }
   }
   for(let angle=min;angle<=max;angle+=400)evaluate(angle);
   evaluate(max);
   for(const [step,radius] of [[100,200],[10,50],[1,5]]){
     rank();
     const centers=[];
-    for(const result of results){
+    for(const {result} of results){
       const center=Math.round(result.angle*100);
       if(centers.some(other=>Math.abs(center-other)<=radius))continue;
       centers.push(center);
@@ -80,7 +87,7 @@ export function plan(s){
     }
   }
   rank();
-  return {best:results[0],count:results.length};
+  return {best:results[0]?.result,count:results.length};
 }
 let clock=null;
 self.onmessage=({data})=>{

@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {availableParallelism} from 'node:os';
-import {Worker, isMainThread, parentPort, workerData} from 'node:worker_threads';
+import {Worker, isMainThread, parentPort} from 'node:worker_threads';
 import {CELL_H, FLOOR, MIN_ANGLE, MAX_ANGLE, createGame, random, simulateTurn} from '../dist/core.js';
 
 const DIMENSIONS = 12; // Intercept plus the eleven browser model features.
@@ -152,11 +152,20 @@ function rmse(stats, coefficients) {
   return Number(Math.sqrt(Math.max(0,error)/stats.count).toFixed(5));
 }
 
-function workerResult(worker) {
+function workerResult(worker, task) {
   return new Promise((resolve,reject)=>{
-    worker.once('message',resolve);
-    worker.once('error',reject);
-    worker.once('exit',code=>{if(code!==0)reject(Error(`Training worker exited with code ${code}`));});
+    function cleanup(){
+      worker.off('message',onMessage);
+      worker.off('error',onError);
+      worker.off('exit',onExit);
+    }
+    function onMessage(result){cleanup();resolve(result);}
+    function onError(error){cleanup();reject(error);}
+    function onExit(code){onError(Error(`Training worker exited with code ${code}`));}
+    worker.once('message',onMessage);
+    worker.once('error',onError);
+    worker.once('exit',onExit);
+    worker.postMessage(task);
   });
 }
 
@@ -173,14 +182,15 @@ async function trainModel() {
   let episodes=0, maxTurn=0, maxBalls=0, states=0;
   const turnRanges={early:0,middle:0,late:0};
   const shards=Math.ceil(requested/SHARD_SIZE);
-  for(let start=0;start<shards;start+=parallel){
-    const batch=Array.from({length:Math.min(parallel,shards-start)},(_,offset)=>{
-      const index=start+offset;
-      return workerResult(new Worker(new URL(import.meta.url),{
-        workerData:{index,states:Math.min(SHARD_SIZE,requested-index*SHARD_SIZE)}
-      }));
-    });
-    for(const result of await Promise.all(batch)){
+  const workers=[];
+  const completed=new Map();
+  const workerCount=Math.min(parallel,shards);
+  let nextShard=0, nextMerge=0;
+  function mergeCompleted(){
+    // Keep floating-point sums independent of how the workers finish.
+    while(completed.has(nextMerge)){
+      const result=completed.get(nextMerge);
+      completed.delete(nextMerge++);
       states+=result.states;
       episodes+=result.episodes;
       maxTurn=Math.max(maxTurn,result.maxTurn);
@@ -188,8 +198,27 @@ async function trainModel() {
       for(const key of Object.keys(turnRanges))turnRanges[key]+=result.turnRanges[key];
       merge(train,result.train);
       merge(validation,result.validation);
+      if(nextMerge%workerCount===0||nextMerge===shards){
+        console.log(`Generated ${states}/${requested} reachable states (${train.count+validation.count} samples)`);
+      }
     }
-    console.log(`Generated ${states}/${requested} reachable states (${train.count+validation.count} samples)`);
+  }
+  async function runWorker(){
+    const worker=new Worker(new URL(import.meta.url));
+    workers.push(worker);
+    while(nextShard<shards){
+      const index=nextShard++;
+      const result=await workerResult(worker,{
+        index,states:Math.min(SHARD_SIZE,requested-index*SHARD_SIZE)
+      });
+      completed.set(index,result);
+      mergeCompleted();
+    }
+  }
+  try{
+    await Promise.all(Array.from({length:workerCount},runWorker));
+  }finally{
+    await Promise.all(workers.map(worker=>worker.terminate()));
   }
   if(train.count<20)throw Error('Not enough completed training samples.');
   const [bias,...weights]=fit(train);
@@ -207,4 +236,4 @@ async function trainModel() {
 }
 
 if(isMainThread)await trainModel();
-else parentPort.postMessage(collectShard(workerData.index,workerData.states));
+else parentPort.on('message',({index,states})=>parentPort.postMessage(collectShard(index,states)));

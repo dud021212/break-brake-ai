@@ -129,9 +129,16 @@ export function stepGame(s, dt) {
     if (s.launched < s.ballCount && (s.launched === 0 || s.launchClock >= 0.085)) {
       emitBall(s); s.launchClock = 0;
     }
-    const remaining = [];
-    for (const ball of s.balls) if (!moveBall(s, ball, slice)) remaining.push(ball);
-    s.balls = remaining;
+    const balls = s.balls;
+    let remaining = 0;
+    for (let index = 0; index < balls.length; index++) {
+      const ball = balls[index];
+      if (!moveBall(s, ball, slice)) {
+        if (index !== remaining) balls[remaining] = ball;
+        remaining++;
+      }
+    }
+    if (balls.length !== remaining) balls.length = remaining;
     if (s.launched === s.ballCount && s.balls.length === 0) { endTurn(s); return; }
   }
 }
